@@ -29,14 +29,30 @@ m.addLayer({id:'areas',type:'fill',source:'annotations',filter:['==',['geometry-
 m.addLayer({id:'edges',type:'line',source:'annotations',filter:['==',['geometry-type'],'Polygon'],paint:{'line-color':colorExpr,'line-width':2.5}});
 m.addLayer({id:'points',type:'circle',source:'annotations',filter:['==',['geometry-type'],'Point'],paint:{'circle-color':colorExpr,'circle-radius':7,'circle-stroke-width':1.5,'circle-stroke-color':'#fff'}});
 m.addSource('draft',{type:'geojson',data:EMPTY});
+m.addLayer({id:'draftfill',type:'fill',source:'draft',filter:['==',['geometry-type'],'Polygon'],paint:{'fill-color':['get','color'],'fill-opacity':0.38}});
 m.addLayer({id:'draftline',type:'line',source:'draft',paint:{'line-color':'#fff','line-width':3,'line-dasharray':[2,1]}});
 m.addLayer({id:'draftpoints',type:'circle',source:'draft',paint:{'circle-radius':5,'circle-color':'#fff','circle-stroke-color':'#174e3c','circle-stroke-width':2}});
 });
 m.on('click',e=>{const xy=[e.lngLat.lng,e.lngLat.lat];if(modeRef.current==='point'){setPending({type:'Point',coordinates:xy});setMode('navigate');setMessage('Punto seleccionado. Completá los metadatos y guardá.')}else if(modeRef.current==='polygon'){vertices.current=[...vertices.current,xy];setDraft([...vertices.current]);setMessage('Vértices: '+vertices.current.length+'. Finalizá el polígono desde el panel.')}});
 return()=>{m.remove();map.current=null};
 },[]);
-useEffect(()=>{const m=map.current;if(!m)return;const apply=()=>{const s=m.getSource('draft');if(!s)return;const f=[];if(draft.length>=2)f.push({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:draft}});for(const p of draft)f.push({type:'Feature',properties:{},geometry:{type:'Point',coordinates:p}});s.setData({type:'FeatureCollection',features:f})};if(m.isStyleLoaded())apply();else m.once('load',apply)},[draft]);
-function switchBase(b){setBasemap(b);const m=map.current;if(!m)return;m.getSource('background')?.setTiles?.((b==='sat'?SAT:OSM).tiles);m.setStyle(styleFor(b));m.once('style.load',()=>{m.addSource('annotations',{type:'geojson',data:read()});m.addLayer({id:'areas',type:'fill',source:'annotations',filter:['==',['geometry-type'],'Polygon'],paint:{'fill-color':colorExpr,'fill-opacity':.35}});m.addLayer({id:'edges',type:'line',source:'annotations',filter:['==',['geometry-type'],'Polygon'],paint:{'line-color':colorExpr,'line-width':2.5}});m.addLayer({id:'points',type:'circle',source:'annotations',filter:['==',['geometry-type'],'Point'],paint:{'circle-color':colorExpr,'circle-radius':7,'circle-stroke-color':'white','circle-stroke-width':1.5}});m.addSource('draft',{type:'geojson',data:EMPTY});m.addLayer({id:'draftline',type:'line',source:'draft',paint:{'line-color':'white','line-width':3}});m.addLayer({id:'draftpoints',type:'circle',source:'draft',paint:{'circle-color':'white','circle-radius':5}});})}
+function makeDraftData(points,geometry,classId){
+const f=[];
+const color=LABELS.find(c=>c.id===classId)?.color||'#fff';
+const polygon=geometry?.type==='Polygon' ? geometry : points.length>=3 ? {type:'Polygon',coordinates:[[...points,points[0]]]} : null;
+if(polygon)f.push({type:'Feature',properties:{color},geometry:polygon});
+if(points.length>=2&&!geometry)f.push({type:'Feature',properties:{},geometry:{type:'LineString',coordinates:points}});
+for(const p of points)if(!geometry)f.push({type:'Feature',properties:{},geometry:{type:'Point',coordinates:p}});
+if(geometry?.type==='Point')f.push({type:'Feature',properties:{},geometry});
+return {type:'FeatureCollection',features:f};
+}
+useEffect(()=>{
+  const m=map.current;if(!m)return;
+  const data=makeDraftData(draft,pending,cls);
+  const update=()=>m.getSource('draft')?.setData(data);
+  if(m.getSource('draft'))update();else m.once('style.load',update);
+},[draft,pending,cls]);
+function switchBase(b){setBasemap(b);const m=map.current;if(!m)return;m.getSource('background')?.setTiles?.((b==='sat'?SAT:OSM).tiles);m.setStyle(styleFor(b));m.once('style.load',()=>{m.addSource('annotations',{type:'geojson',data:read()});m.addLayer({id:'areas',type:'fill',source:'annotations',filter:['==',['geometry-type'],'Polygon'],paint:{'fill-color':colorExpr,'fill-opacity':.35}});m.addLayer({id:'edges',type:'line',source:'annotations',filter:['==',['geometry-type'],'Polygon'],paint:{'line-color':colorExpr,'line-width':2.5}});m.addLayer({id:'points',type:'circle',source:'annotations',filter:['==',['geometry-type'],'Point'],paint:{'circle-color':colorExpr,'circle-radius':7,'circle-stroke-color':'white','circle-stroke-width':1.5}});m.addSource('draft',{type:'geojson',data:EMPTY});m.addLayer({id:'draftfill',type:'fill',source:'draft',filter:['==',['geometry-type'],'Polygon'],paint:{'fill-color':['get','color'],'fill-opacity':0.38}});m.addLayer({id:'draftline',type:'line',source:'draft',paint:{'line-color':'white','line-width':3}});m.addLayer({id:'draftpoints',type:'circle',source:'draft',paint:{'circle-color':'white','circle-radius':5}});m.getSource('draft').setData(makeDraftData(draft,pending,cls));})}
 function finish(){if(draft.length<3){setMessage('Necesitás al menos tres vértices.');return}setPending({type:'Polygon',coordinates:[[...draft,draft[0]]]});setMode('navigate');setMessage('Polígono listo. Completá los metadatos y guardá.')}
 function save(){if(!pending)return;const id=uuid();const chosen=LABELS.find(c=>c.id===cls);const feature={type:'Feature',id,geometry:pending,properties:{class_id:cls,class_name:chosen.name,confidence,interpreter:interpreter||'sin identificar',imagery_date:date||null,observations:notes,created_at:new Date().toISOString(),reference_source:basemap==='sat'?'Esri World Imagery':'OpenStreetMap'}};setFeatures(f=>({type:'FeatureCollection',features:[feature,...f.features]}));setSelected(id);setPending(null);vertices.current=[];setDraft([]);setNotes('');setMessage('Etiqueta guardada en este navegador. Exportá una copia GeoJSON.')}
 function download(){const blob=new Blob([JSON.stringify(features,null,2)],{type:'application/geo+json'});const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download='freyr-labeler-santafe-'+new Date().toISOString().slice(0,10)+'.geojson';a.click();setTimeout(()=>URL.revokeObjectURL(url),1000)}
